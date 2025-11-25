@@ -261,20 +261,55 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         
-        # 상세 정보 표시 (assistant 메시지 + 토글 ON + full_answer 있을 때)
-        if show_details and msg["role"] == "assistant" and "full_answer" in msg:
-            with st.expander("📊 상세 정보"):
-                meta = msg["full_answer"].get("_meta", {})
-                
-                # 분류 정보
-                st.write("**🏷️ 질문 유형:**", meta.get("query_type", "N/A"))
-                st.write("**📈 확신도:**", f"{meta.get('classification', {}).get('confidence', 0):.0%}")
-                
-                # 참조 문서
-                st.write("**📚 참조 문서:**")
-                for i, s in enumerate(meta.get("sources", [])[:3], 1):
-                    st.write(f"  [{i}] {s['doc_name']} (p.{s['page']})")
-
+        # assistant 메시지이고 full_answer가 있을 때
+        if msg["role"] == "assistant" and "full_answer" in msg:
+            full_answer = msg["full_answer"]
+            meta = full_answer.get("_meta", {})
+            search_results = meta.get("search_results", [])
+            
+            # 출처가 있을 때만 expander 표시
+            if search_results:
+                # show_details에 따라 expanded 여부 결정
+                with st.expander("📚 근거 및 출처 보기", expanded=show_details):
+                    
+                    # 기본 정보
+                    query_type = meta.get("query_type", "N/A")
+                    confidence = meta.get("classification", {}).get("confidence", 0)
+                    
+                    st.info(f"🏷️ **질문 유형:** {query_type} | **확신도:** {confidence:.0%}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"##### 🔍 검색된 청크 ({len(search_results)}개)")
+                    
+                    # 각 청크 표시
+                    for i, result in enumerate(search_results, 1):
+                        chunk_content = result.get('content', '')
+                        metadata = result.get('metadata', {})
+                        doc_name = metadata.get('doc_name', '문서명 없음')
+                        page = metadata.get('page', '?')
+                        
+                        # 관련성 점수
+                        relevance = result.get('rrf_score', result.get('score', 0))
+                        
+                        # 청크 정보 헤더
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.markdown(f"**[청크 {i}] {doc_name}** (페이지 {page})")
+                        with col2:
+                            st.caption(f"관련성: {relevance:.3f}")
+                        
+                        # 청크 내용 표시
+                        st.text_area(
+                            label=f"청크 내용",
+                            value=chunk_content,
+                            height=200,
+                            key=f"chunk_{id(msg)}_{i}",
+                            disabled=True,
+                            label_visibility="collapsed"
+                        )                       
+                       
+                        if i < len(search_results):
+                            st.markdown("---")
 # 문서 편집기 표시
 if st.session_state.current_document:
     st.markdown("---")

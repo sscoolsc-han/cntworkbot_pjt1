@@ -89,6 +89,7 @@ class EnhancedLegalQASystem:
           "query_type": query_type,
           "classification": classification,
           "search_strategy": search_strategy,
+          "search_results": search_results,
           "sources": [
               {
                   "doc_name": r['metadata']['doc_name'],
