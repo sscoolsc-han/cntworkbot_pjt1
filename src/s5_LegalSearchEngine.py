@@ -5,12 +5,14 @@ s5_LegalSearchEngine.py
 
 import numpy as np
 import faiss
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from rank_bm25 import BM25Okapi
 import re
 import json
 import pickle
 import os
+
+from sentence_transformers import CrossEncoder
 
 class LegalSearchEngine:
     """법령 특화 하이브리드 검색 엔진"""
@@ -40,6 +42,13 @@ class LegalSearchEngine:
             self.build_bm25_index()
             if bm25_index_path:
                 self.save_bm25_index()
+        
+        print("\n🔧 Reranker 로딩 중...")
+        self.reranker = CrossEncoder(
+            'BAAI/bge-reranker-v2-m3',
+            max_length=512
+        )
+        print("  ✓ Reranker 로딩 완료")
         
         print("\n✓ LegalSearchEngine 초기화 완료")
         print(f"  - FAISS 벡터 수: {faiss_index.ntotal}")
@@ -158,7 +167,7 @@ class LegalSearchEngine:
             }
             results.append(result)
             
-            if len(results) >= top_k*10:
+            if len(results) >= top_k:
                 break
         
         return results
@@ -200,22 +209,58 @@ class LegalSearchEngine:
         
         return results
     
+    def rerank(self, query: str, results: List[Dict], top_k: int = 5) -> List[Dict]:
+        """Cross-encoder로 리랭킹"""
+        if not results:
+            return results        
+        pairs = [(query, r['content']) for r in results]
+        scores = self.reranker.predict(pairs)        
+        for i, result in enumerate(results):
+            result['rerank_score'] = float(scores[i])
+        reranked = sorted(results, key=lambda x: x['rerank_score'], reverse=True)
+        for i, r in enumerate(reranked):
+            r['rank'] = i + 1       
+        return reranked[:top_k]
+    
     def hybrid_search(self,
-                     query: str,
-                     top_k: int = 10) -> List[Dict]:
-        """하이브리드 검색 + 법령 필터링"""
-        vector_results = self.vector_search(
-            query, 
-            top_k=top_k)
+                    query: str,
+                    top_k: int = 10,  # ← 쉼표 빠졌었음!
+                    use_rerank: bool = True,
+                    progress_callback: Optional[Callable[[str], None]] = None) -> List[Dict]:
+        """
+        하이브리드 검색 + 리랭킹
         
-        keyword_results = self.keyword_search(
-            query,
-            top_k=top_k)
+        Args:
+            query: 검색어
+            top_k: 최종 반환 개수
+            use_rerank: 리랭킹 사용 여부
+            progress_callback: 진행 상황 콜백 함수
+        """
         
-        hybrid_results = self.reciprocal_rank_fusion(vector_results, keyword_results)
-        
-        return hybrid_results[:top_k]
+        def update_progress(msg: str):
+            if progress_callback:
+                progress_callback(msg)
 
+        update_progress("🔍 벡터 검색 중...")
+        vector_results = self.vector_search(query, top_k=top_k)
+        update_progress(f"  ✓ 벡터 검색 완료: {len(vector_results)}개")
+        
+        update_progress("🔍 키워드 검색 중...")
+        keyword_results = self.keyword_search(query, top_k=top_k)
+        update_progress(f"  ✓ 키워드 검색 완료: {len(keyword_results)}개")
+        
+        update_progress("🔀 검색 결과 융합 중...")
+        hybrid_results = self.reciprocal_rank_fusion(vector_results, keyword_results)
+        update_progress(f"  ✓ 융합 완료: {len(hybrid_results)}개 후보") 
+        
+        if use_rerank:
+            update_progress(f"🎯 Reranker로 정밀 분석 중... ({min(len(hybrid_results), top_k)}개 문서)")
+            final_results = self.rerank(query, hybrid_results[:3], 3)
+            update_progress(f"  ✓ 리랭킹 완료: 상위 {len(final_results)}개 선정")
+        else:
+            final_results = hybrid_results[:top_k]
+        
+        return final_results
 
 def main():
     """테스트 코드"""
