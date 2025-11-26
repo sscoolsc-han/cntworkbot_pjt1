@@ -21,15 +21,27 @@ class EnhancedLegalQASystem:
         self.classifier = QueryClassifier(openai_api_key)
         self.response_templates = self._load_response_templates()
             
-    def _execute_search(self, query: str, query_type: str, strategy: Dict) -> List[Dict]:
+    def _execute_search(self, query: str, query_type: str, top_k: int = 5, progress_callback=None) -> List[Dict]:
 
+        def update_progress(msg: str):
+            if progress_callback:
+                progress_callback(msg)
+
+        # 쿼리 확장 (특정 유형만)
         if query_type in self.EXPAND_TYPES:
+            update_progress("🔄 쿼리 확장 중...")
             search_query = self._expand_query(query, query_type)
-            print(f"  🔄 쿼리 확장: {search_query[:50]}...")
+            update_progress(f"  ✓ 확장 완료: {search_query[:50]}...")
         else:
             search_query = query
         
-        return self.search_engine.hybrid_search(search_query, top_k=strategy['top_k'])
+        # 하이브리드 검색 + 리랭킹
+        return self.search_engine.hybrid_search(
+            search_query, 
+            top_k=top_k,
+            use_rerank=True,
+            progress_callback=progress_callback
+        )
     
     def _expand_query(self, query: str, query_type: str) -> str:
         """유형별로 다른 쿼리 확장 전략"""
@@ -117,15 +129,15 @@ class EnhancedLegalQASystem:
         }
       
       # 2단계: 검색 전략 결정      
-      search_strategy = self.classifier.get_search_strategy(query_type)
-            
-      # 3단계: 문서 검색      
       update_progress("📚 법령 데이터베이스를 검색하고 있습니다...")
-      search_results = self._execute_search(query, query_type, search_strategy)
+      search_results = self._execute_search(
+        query, 
+        query_type, 
+        top_k=3,
+        progress_callback=progress_callback)
       update_progress(f"✅ {len(search_results)}개 관련 문서 발견")
       
-      # 4단계: GPT 답변 생성 (JSON)
-
+      # 3단계: GPT 답변 생성 (JSON)
       update_progress("🤖 GPT가 법령을 분석하여 구조화된 답변을 작성 중...")
       answer = self._generate_answer(query, query_type, search_results, classification)
       update_progress("✅ 구조화 답변 완료")
@@ -135,7 +147,6 @@ class EnhancedLegalQASystem:
           "query": query,
           "query_type": query_type,
           "classification": classification,
-          "search_strategy": search_strategy,
           "search_results": search_results,
           "sources": [
               {
@@ -147,7 +158,7 @@ class EnhancedLegalQASystem:
           ]
       }
       
-      # 5단계: 사용자 친화적 답변 생성 (추가!)
+      # 4단계: 사용자 친화적 답변 생성
       if format_for_user:
           update_progress("✍️ 사용자가 이해하기 쉬운 자연어로 변환 중...")
           answer["user_friendly_answer"] = self._format_for_user(answer)
