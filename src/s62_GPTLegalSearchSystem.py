@@ -3,6 +3,7 @@ enhanced_legal_qa_system.py
 GPT 기반 분류를 사용하는 법령 QA 시스템
 """
 
+from urllib import response
 from openai import OpenAI
 import json
 from typing import Dict, List
@@ -11,21 +12,69 @@ from s61_QueryClassifier import QueryClassifier
 
 class EnhancedLegalQASystem:
     """유형별 답변을 제공하는 고급 QA 시스템"""
-    
+
+    EXPAND_TYPES = {"일반_정보_검색", "상황별_컨설팅"}
+
     def __init__(self, search_engine, openai_api_key: str):
         self.search_engine = search_engine
         self.client = OpenAI(api_key=openai_api_key)
         self.classifier = QueryClassifier(openai_api_key)
         self.response_templates = self._load_response_templates()
-    
-    def _execute_search(self, query: str, strategy: Dict) -> List[Dict]:
-        """검색 전략에 따라 검색 실행"""
-        method = strategy['search_method']
-        top_k = strategy['top_k']
+            
+    def _execute_search(self, query: str, query_type: str, strategy: Dict) -> List[Dict]:
+
+        if query_type in self.EXPAND_TYPES:
+            search_query = self._expand_query(query, query_type)
+            print(f"  🔄 쿼리 확장: {search_query[:50]}...")
+        else:
+            search_query = query
         
-        if method == 'hybrid':
-            return self.search_engine.hybrid_search(query, top_k=top_k)
+        return self.search_engine.hybrid_search(search_query, top_k=strategy['top_k'])
     
+    def _expand_query(self, query: str, query_type: str) -> str:
+        """유형별로 다른 쿼리 확장 전략"""
+        
+        if query_type == "일반_정보_검색":
+            # 키워드 추가 방식
+            prompt = f"""건설/안전 법령 검색용으로 쿼리를 확장해주세요.
+
+    질문: {query}
+
+    추가할 것:
+    1. 관련 법률 용어
+    2. 예상되는 조항 키워드 (제○조)
+    3. 동의어
+
+    한 줄로 출력 (설명 없이):"""
+
+        elif query_type == "상황별_컨설팅":
+            # 핵심 키워드 추출 방식
+            prompt = f"""다음 현장 상황 질문에서 법령 검색용 핵심 키워드만 추출해주세요.
+
+    질문: {query}
+
+    추출할 것:
+    1. 핵심 대상 (예: 작업발판, 비계, 굴착)
+    2. 관련 수치 기준 (예: 40cm, 2m 이상)
+    3. 예상되는 관련 조항 (제○조)
+
+    검색 키워드만 한 줄로 출력 (설명 없이):"""
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0
+        )
+        
+        expanded = response.choices[0].message.content.strip()
+        
+        # 상황별_컨설팅은 추출된 키워드로 검색
+        if query_type == "상황별_컨설팅":
+            return expanded  # 원본 대신 키워드만
+        else:
+            return f"{query} {expanded}"  # 원본 + 확장
+        
     def generate_answer(self, query: str, verbose: bool = True, 
                     format_for_user: bool = True,
                 progress_callback=None) -> Dict:
@@ -62,6 +111,23 @@ class EnhancedLegalQASystem:
       query_type = classification["query_type"]
       update_progress(f"✅ 유형 분류 완료: {query_type}")
 
+      # 일상_대화는 검색 없이 바로 응답
+      if query_type == "일상_대화":
+        if verbose:
+            update_progress("💬 일상 대화로 응답합니다...")        
+        response = self._generate_casual_response(query)
+        
+        return {
+            "user_friendly_answer": response,
+            "_meta": {
+                "query": query,
+                "query_type": query_type,
+                "classification": classification,
+                "search_results": [],  # 검색 안 함
+                "sources": []
+            }
+        }
+
       if verbose:
           print(f"  ✓ 유형: {query_type}")
           print(f"  ✓ 확신도: {classification['confidence']:.2f}")
@@ -84,7 +150,7 @@ class EnhancedLegalQASystem:
           print("\n[3단계] 문서 검색 중...")
       
       update_progress("📚 법령 데이터베이스를 검색하고 있습니다...")
-      search_results = self._execute_search(query, search_strategy)
+      search_results = self._execute_search(query, query_type, search_strategy)
       update_progress(f"✅ {len(search_results)}개 관련 문서 발견")
       
       if verbose:
@@ -125,7 +191,7 @@ class EnhancedLegalQASystem:
           update_progress("✍️ 사용자가 이해하기 쉬운 자연어로 변환 중...")
           answer["user_friendly_answer"] = self._format_for_user(answer)
           update_progress("✅ 최종 답변 완성!")
-          
+
           if verbose:
               print("  ✓ 사용자 답변 생성 완료")
       
@@ -134,6 +200,24 @@ class EnhancedLegalQASystem:
       
       return answer
 
+    def _generate_casual_response(self, query: str) -> str:
+        
+        prompt = f"""당신은 건설법령 챗봇입니다. 
+    사용자가 일상적인 인사나 대화를 했습니다. 
+    친근하게 응답하고, 필요하면 법령 관련 질문을 유도하세요.
+
+    사용자: {query}
+
+    응답 (1-2문장, 친근하게):"""
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.7
+        )
+    
+        return response.choices[0].message.content.strip()
 
     def _generate_answer(self, query: str, query_type: str, 
                         search_results: List[Dict], classification: Dict) -> Dict:
