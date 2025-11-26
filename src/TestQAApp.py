@@ -383,7 +383,6 @@ if prompt := st.chat_input("질문을 입력하세요"):
     
             answer = qa_system.generate_answer(
                 prompt, 
-                verbose=False, 
                 format_for_user=True,
                 progress_callback=progress_cb
             )

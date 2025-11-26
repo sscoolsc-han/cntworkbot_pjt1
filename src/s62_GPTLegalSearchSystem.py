@@ -75,7 +75,7 @@ class EnhancedLegalQASystem:
         else:
             return f"{query} {expanded}"  # 원본 + 확장
         
-    def generate_answer(self, query: str, verbose: bool = True, 
+    def generate_answer(self, query: str, 
                     format_for_user: bool = True,
                 progress_callback=None) -> Dict:
       """
@@ -83,7 +83,6 @@ class EnhancedLegalQASystem:
       
       Args:
           query: 사용자 질문
-          verbose: 진행 상황 출력 여부
           format_for_user: 사용자 친화적 답변 추가 여부
           progress_callback: 진행 상황 업데이트 함수 (선택)
       
@@ -93,19 +92,10 @@ class EnhancedLegalQASystem:
 
       def update_progress(message: str):
         """진행 상황 업데이트 헬퍼"""
-        if verbose:
-            print(f"  {message}")
         if progress_callback:
             progress_callback(message)
         
-      if verbose:
-          print(f"\n{'='*80}")
-          print(f"💬 질문: {query}")
-          print("="*80)
-      
       # 1단계: GPT로 질문 유형 분류
-      if verbose:
-          print("\n[1단계] GPT 질문 유형 분류 중...")
       update_progress("🔍 GPT가 질문 유형을 분석하고 있습니다...")
       classification = self.classifier.classify(query)
       query_type = classification["query_type"]
@@ -113,8 +103,6 @@ class EnhancedLegalQASystem:
 
       # 일상_대화는 검색 없이 바로 응답
       if query_type == "일상_대화":
-        if verbose:
-            update_progress("💬 일상 대화로 응답합니다...")        
         response = self._generate_casual_response(query)
         
         return {
@@ -127,38 +115,16 @@ class EnhancedLegalQASystem:
                 "sources": []
             }
         }
-
-      if verbose:
-          print(f"  ✓ 유형: {query_type}")
-          print(f"  ✓ 확신도: {classification['confidence']:.2f}")
-          print(f"  ✓ 이유: {classification['reasoning']}")
-          if classification['key_entities']:
-              print(f"  ✓ 핵심 키워드: {', '.join(classification['key_entities'])}")
       
-      # 2단계: 검색 전략 결정
-      if verbose:
-          print("\n[2단계] 검색 전략 결정...")
-      
+      # 2단계: 검색 전략 결정      
       search_strategy = self.classifier.get_search_strategy(query_type)
-      
-      if verbose:
-          print(f"  ✓ 검색 방법: {search_strategy['search_method']}")
-          print(f"  ✓ 결과 수: {search_strategy['top_k']}")
-      
-      # 3단계: 문서 검색
-      if verbose:
-          print("\n[3단계] 문서 검색 중...")
-      
+            
+      # 3단계: 문서 검색      
       update_progress("📚 법령 데이터베이스를 검색하고 있습니다...")
       search_results = self._execute_search(query, query_type, search_strategy)
       update_progress(f"✅ {len(search_results)}개 관련 문서 발견")
       
-      if verbose:
-          print(f"  ✓ {len(search_results)}개 문서 검색 완료")
-      
       # 4단계: GPT 답변 생성 (JSON)
-      if verbose:
-          print("\n[4단계] GPT 구조화 답변 생성 중...")
 
       update_progress("🤖 GPT가 법령을 분석하여 구조화된 답변을 작성 중...")
       answer = self._generate_answer(query, query_type, search_results, classification)
@@ -181,22 +147,11 @@ class EnhancedLegalQASystem:
           ]
       }
       
-      if verbose:
-          print("  ✓ 구조화 답변 생성 완료")
-      
       # 5단계: 사용자 친화적 답변 생성 (추가!)
       if format_for_user:
-          if verbose:
-              print("\n[5단계] 사용자 친화적 답변 변환 중...")
           update_progress("✍️ 사용자가 이해하기 쉬운 자연어로 변환 중...")
           answer["user_friendly_answer"] = self._format_for_user(answer)
           update_progress("✅ 최종 답변 완성!")
-
-          if verbose:
-              print("  ✓ 사용자 답변 생성 완료")
-      
-      if verbose:
-          print("="*80 + "\n")
       
       return answer
 
